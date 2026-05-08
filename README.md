@@ -1,4 +1,6 @@
-# Daily Resume
+# Ohayo
+
+> *Ohayo* (おはよう) — Japanese for "good morning."
 
 A local-only Windows tool that helps you "resume" yesterday's work in the morning.
 
@@ -28,7 +30,7 @@ than actual open tabs (it includes pages you only glanced at).
 ## Layout
 
 ```
-daily-resume/
+Ohayo/
 ├── capture.py          # daemon entry — run on a schedule
 ├── launcher.py         # morning GUI entry — run at logon
 ├── config.json         # which browsers to read, ignore lists, etc.

@@ -105,7 +105,7 @@ class LauncherApp:
         self.url_vars: list[tuple[BooleanVar, dict]] = []
         self.app_vars: list[tuple[BooleanVar, dict]] = []
 
-        root.title("Daily Resume — yesterday's session")
+        root.title("Ohayo — yesterday's session")
         root.geometry("960x640")
 
         self._build_ui()
@@ -237,7 +237,7 @@ def main() -> int:
         root = Tk()
         root.withdraw()
         messagebox.showinfo(
-            "Daily Resume",
+            "Ohayo",
             f"No session snapshots found in {DATA_DIR}.\n\n"
             "Run capture.py first (or wait for the scheduled task to fire).",
         )
