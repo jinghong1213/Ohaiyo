@@ -63,3 +63,16 @@ python launcher.py       # open the morning GUI
 Scheduled (recommended):
 - Task Scheduler → trigger "At log on" and "Every 15 minutes" → action `scripts\run_capture.bat`
 - Task Scheduler → trigger "At log on" → action `python launcher.py`
+
+## Demo / same-day testing
+
+By default the launcher only shows snapshots from **before midnight today**
+(the "yesterday" definition). For demos or quick iteration, pass `--latest`
+to load whatever's newest:
+
+```
+python capture.py
+# close a few apps to simulate "shutting down"
+python launcher.py --latest
+# tick what to bring back, click Launch selected
+```

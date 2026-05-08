@@ -64,11 +64,24 @@ def _pick_top_urls(visits: list[dict], n: int) -> list[dict]:
     return ranked[:n]
 
 
-def _load_yesterday_session() -> tuple[Path, dict] | None:
-    today_start = datetime.combine(datetime.now().date(), datetime.min.time())
-    path = storage.latest_session_before(DATA_DIR, today_start)
-    if path is None:
-        return None
+def _load_session(latest: bool = False) -> tuple[Path, dict] | None:
+    """Pick which snapshot to show.
+
+    Default: the newest snapshot captured strictly before midnight today
+    (i.e. "yesterday's last save"). With latest=True the time filter is
+    skipped and we just take the newest file in data/ — handy for demos
+    where you capture, close some apps, and relaunch in the same session.
+    """
+    if latest:
+        all_sessions = storage.list_sessions(DATA_DIR)
+        if not all_sessions:
+            return None
+        path = all_sessions[-1]
+    else:
+        today_start = datetime.combine(datetime.now().date(), datetime.min.time())
+        path = storage.latest_session_before(DATA_DIR, today_start)
+        if path is None:
+            return None
     return path, storage.load_session(path)
 
 
@@ -226,12 +239,25 @@ class LauncherApp:
 
 
 def main() -> int:
+    import argparse
+    parser = argparse.ArgumentParser(
+        prog="launcher.py",
+        description="Ohayo — open the morning launcher GUI.",
+    )
+    parser.add_argument(
+        "--latest",
+        action="store_true",
+        help="Load the newest snapshot regardless of date "
+             "(default loads only snapshots from before midnight today).",
+    )
+    args = parser.parse_args()
+
     if not CONFIG_PATH.exists():
         print("config.json missing", file=sys.stderr)
         return 1
     config = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
 
-    loaded = _load_yesterday_session()
+    loaded = _load_session(latest=args.latest)
     if loaded is None:
         # Show a tiny error window rather than crashing silently.
         root = Tk()
