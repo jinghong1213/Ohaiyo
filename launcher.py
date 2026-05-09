@@ -118,7 +118,7 @@ class LauncherApp:
         self.url_vars: list[tuple[BooleanVar, dict]] = []
         self.app_vars: list[tuple[BooleanVar, dict]] = []
 
-        root.title("Ohayo — yesterday's session")
+        root.title("Ohaiyo — yesterday's session")
         root.geometry("960x640")
 
         self._build_ui()
@@ -128,10 +128,21 @@ class LauncherApp:
         outer = ttk.Frame(self.root, padding=12)
         outer.pack(fill="both", expand=True)
 
+        # Brand row: "Oh" + italic "ai" + "yo". We pack three Labels side-by-side
+        # because Tk Labels can't carry inline styling; this is the workaround.
+        brand = ttk.Frame(outer)
+        brand.pack(anchor="w", pady=(0, 2))
+        brand_regular = ("Segoe UI", 22, "bold")
+        brand_italic = ("Segoe UI", 22, "bold italic")
+        ttk.Label(brand, text="Oh", font=brand_regular).pack(side="left")
+        ttk.Label(brand, text="ai", font=brand_italic, foreground="#5b8def").pack(side="left")
+        ttk.Label(brand, text="yo", font=brand_regular).pack(side="left")
+
         header = ttk.Label(
             outer,
             text=f"Loaded snapshot: {self.session_path.name}",
-            font=("Segoe UI", 11, "bold"),
+            font=("Segoe UI", 10),
+            foreground="#666",
         )
         header.pack(anchor="w", pady=(0, 6))
 
@@ -242,7 +253,7 @@ def main() -> int:
     import argparse
     parser = argparse.ArgumentParser(
         prog="launcher.py",
-        description="Ohayo — open the morning launcher GUI.",
+        description="Ohaiyo — open the morning launcher GUI.",
     )
     parser.add_argument(
         "--latest",
@@ -263,7 +274,7 @@ def main() -> int:
         root = Tk()
         root.withdraw()
         messagebox.showinfo(
-            "Ohayo",
+            "Ohaiyo",
             f"No session snapshots found in {DATA_DIR}.\n\n"
             "Run capture.py first (or wait for the scheduled task to fire).",
         )

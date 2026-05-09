@@ -1,6 +1,7 @@
-# Ohayo
+# Oh*ai*yo
 
-> *Ohayo* (おはよう) — Japanese for "good morning."
+> Pronounced like *ohayō* (おはよう), Japanese for "good morning." The
+> stylized "*ai*" is a nod to the AI-assist that helps build it.
 
 A local-only Windows tool that helps you "resume" yesterday's work in the morning.
 
@@ -30,7 +31,7 @@ than actual open tabs (it includes pages you only glanced at).
 ## Layout
 
 ```
-Ohayo/
+Ohaiyo/
 ├── capture.py          # daemon entry — run on a schedule
 ├── launcher.py         # morning GUI entry — run at logon
 ├── config.json         # which browsers to read, ignore lists, etc.
