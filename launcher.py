@@ -17,17 +17,25 @@ from collections import Counter
 from datetime import datetime, timedelta
 from pathlib import Path
 from tkinter import Tk, ttk, StringVar, BooleanVar, messagebox, scrolledtext
+from typing import Callable
 from urllib.parse import urlparse
 
-from core import storage, summary
+from core import storage, summary, splash
 
 ROOT = Path(__file__).resolve().parent
 CONFIG_PATH = ROOT / "config.json"
 DATA_DIR = ROOT / "data"
 LOG_DIR = ROOT / "log"
+ASSETS_DIR = ROOT / "assets"
+CAT_GIF = ASSETS_DIR / "cat.gif"  # optional asset — splash falls back to ASCII
 
 # Cap how many URLs we show — history is noisy, top-N keeps the UI scannable.
 MAX_URLS_SHOWN = 25
+
+# Cat frames used during launch — the kaomoji "purrs" while apps open.
+_LAUNCH_CAT_BUSY = "( =^o^= )"   # excited / paws on keyboard
+_LAUNCH_CAT_IDLE = "( =^.^= )"   # default
+_LAUNCH_STEP_MS = 300            # delay between each launch — visual punch
 
 
 def _log(line: str) -> None:
@@ -167,7 +175,9 @@ class LauncherApp:
         # Footer
         footer = ttk.Frame(outer)
         footer.pack(fill="x", pady=(10, 0))
-        self.status = StringVar(value="Tick what you want, untick what was noise.")
+        self.status = StringVar(
+            value=f"{_LAUNCH_CAT_IDLE}  tick what you want, untick what was noise."
+        )
         ttk.Label(footer, textvariable=self.status).pack(side="left")
         ttk.Button(footer, text="Skip all", command=self._uncheck_all).pack(side="right", padx=4)
         ttk.Button(footer, text="Select all", command=self._check_all).pack(side="right", padx=4)
@@ -227,26 +237,51 @@ class LauncherApp:
             v.set(False)
 
     def _launch(self) -> None:
-        chosen_urls = [d for v, d in self.url_vars if v.get()]
-        chosen_apps = [d for v, d in self.app_vars if v.get()]
+        # Build a single queue of (label, action) so we can step through one
+        # item per tick. The "purring" cat animation in the status bar is
+        # what makes the launch feel responsive.
+        queue: list[tuple[str, Callable[[], None]]] = []
 
-        for visit in chosen_urls:
+        for visit in [d for v, d in self.url_vars if v.get()]:
             cmd = self._browser_cmd_by_name.get(visit.get("browser"), self._default_browser_cmd)
-            try:
-                _launch_url(visit["url"], cmd)
-                _log(f"launched url: {visit['url']}")
-            except Exception as e:
-                _log(f"failed url {visit['url']}: {e}")
+            label = visit.get("title") or visit["url"]
 
-        for app in chosen_apps:
-            try:
-                _launch_app(app.get("exe_path"), app["name"])
-                _log(f"launched app: {app['name']}")
-            except Exception as e:
-                _log(f"failed app {app['name']}: {e}")
+            def make_url_action(v=visit, c=cmd):
+                def _do():
+                    try:
+                        _launch_url(v["url"], c)
+                        _log(f"launched url: {v['url']}")
+                    except Exception as e:
+                        _log(f"failed url {v['url']}: {e}")
+                return _do
 
-        self.status.set(f"Launched {len(chosen_urls)} URL(s) and {len(chosen_apps)} app(s).")
-        # Don't auto-close — user might want to see what happened, or relaunch more.
+            queue.append((str(label)[:40], make_url_action()))
+
+        for app in [d for v, d in self.app_vars if v.get()]:
+            def make_app_action(a=app):
+                def _do():
+                    try:
+                        _launch_app(a.get("exe_path"), a["name"])
+                        _log(f"launched app: {a['name']}")
+                    except Exception as e:
+                        _log(f"failed app {a['name']}: {e}")
+                return _do
+
+            queue.append((app["name"], make_app_action()))
+
+        # Run the queue with a small delay between each so the user (and any
+        # interviewer watching) can see the cat working through the list.
+        total = len(queue)
+        self._launch_step(queue, 0, total)
+
+    def _launch_step(self, queue: list, idx: int, total: int) -> None:
+        if idx >= total:
+            self.status.set(f"{_LAUNCH_CAT_IDLE}  done — launched {total} item(s).")
+            return
+        label, action = queue[idx]
+        self.status.set(f"{_LAUNCH_CAT_BUSY}  launching {label}…  ({idx + 1}/{total})")
+        action()
+        self.root.after(_LAUNCH_STEP_MS, lambda: self._launch_step(queue, idx + 1, total))
 
 
 def main() -> int:
@@ -281,8 +316,18 @@ def main() -> int:
         return 0
 
     path, session = loaded
+
+    # Build the root, hide it, show splash, then reveal LauncherApp when the
+    # splash finishes. Sequencing this on Tk's event loop keeps everything on
+    # one thread — Tk is not thread-safe, so no threading.Timer here.
     root = Tk()
-    LauncherApp(root, path, session, config)
+    root.withdraw()
+
+    def build_main() -> None:
+        root.deiconify()
+        LauncherApp(root, path, session, config)
+
+    splash.Splash(root, on_close=build_main, gif_path=CAT_GIF)
     root.mainloop()
     return 0
 

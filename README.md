@@ -77,3 +77,15 @@ python capture.py
 python launcher.py --latest
 # tick what to bring back, click Launch selected
 ```
+
+## The cat 🐱
+
+The launcher opens with a small splash window: a blinking ASCII cat
+`( =^.^= )` and the *Oh*ai*yo!* greeting. Click it (or wait ~2 seconds) and
+the main window appears. As you launch apps, the same cat "purrs" through
+the status bar one item at a time so you can see what's happening.
+
+**Want a real animated cat?** Drop a GIF at `assets/cat.gif` and the splash
+will use it instead — Tk reads each frame natively via
+`PhotoImage(format="gif -index N")`. Suggested sources are linked in
+`assets/README.md`.
