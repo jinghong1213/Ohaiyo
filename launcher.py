@@ -16,7 +16,8 @@ import sys
 from collections import Counter
 from datetime import datetime, timedelta
 from pathlib import Path
-from tkinter import Tk, ttk, StringVar, BooleanVar, messagebox, scrolledtext
+import tkinter as tk
+from tkinter import Tk, ttk, StringVar, BooleanVar, IntVar, messagebox, scrolledtext
 from typing import Callable
 from urllib.parse import urlparse
 
@@ -36,6 +37,84 @@ MAX_URLS_SHOWN = 25
 _LAUNCH_CAT_BUSY = "( =^o^= )"   # excited / paws on keyboard
 _LAUNCH_CAT_IDLE = "( =^.^= )"   # default
 _LAUNCH_STEP_MS = 300            # delay between each launch — visual punch
+
+
+# ---------------------------------------------------------------------------
+# Design system
+# ---------------------------------------------------------------------------
+#
+# Centralizing the palette + typography here means anywhere in the UI we can
+# refer to PALETTE["accent"] instead of remembering "#5B8DEF". When the brand
+# evolves we change one map.
+#
+PALETTE = {
+    "bg":          "#FAF7F2",  # window background — warm off-white
+    "surface":     "#FFFFFF",  # cards
+    "border":      "#E8DFD3",  # 1px hairlines around cards
+    "text":        "#2A2522",  # primary text — warm near-black
+    "muted":       "#7A6657",  # secondary text
+    "subtle":      "#9E8E7C",  # tertiary / labels
+    "accent":      "#5B8DEF",  # brand blue — the italic "ai"
+    "accent_dim":  "#4A7BDE",  # accent on hover
+    "accent_soft": "#E8F0FE",  # accent tint for fills
+    "hover":       "#F4EFE7",  # row hover background
+    "sites":       "#5B8DEF",  # left column accent (sites)
+    "apps":        "#E89146",  # right column accent (apps)
+    "cat":         "#5A3E2E",  # kaomoji color
+    "white":       "#FFFFFF",
+}
+
+FONT_BASE = "Segoe UI"
+
+
+def _apply_design(root: Tk) -> None:
+    """Configure ttk widget styles + root window to use the design system.
+
+    The `clam` theme is the most customizable cross-platform. We override
+    button styles for primary/secondary, and use direct tk widgets (not ttk)
+    where we need precise color control over containers.
+    """
+    style = ttk.Style(root)
+    try:
+        style.theme_use("clam")
+    except tk.TclError:
+        pass  # fall through with current theme if `clam` unavailable
+
+    root.configure(bg=PALETTE["bg"])
+
+    # Primary action button — accent fill, white text, generous padding.
+    style.configure(
+        "Primary.TButton",
+        background=PALETTE["accent"],
+        foreground=PALETTE["white"],
+        font=(FONT_BASE, 11, "bold"),
+        padding=(18, 10),
+        borderwidth=0,
+        focusthickness=0,
+    )
+    style.map(
+        "Primary.TButton",
+        background=[("active", PALETTE["accent_dim"]),
+                    ("pressed", PALETTE["accent_dim"])],
+        foreground=[("disabled", "#CCCCCC")],
+    )
+
+    # Secondary button — outlined, neutral.
+    style.configure(
+        "Secondary.TButton",
+        background=PALETTE["surface"],
+        foreground=PALETTE["text"],
+        font=(FONT_BASE, 10),
+        padding=(14, 8),
+        borderwidth=1,
+        relief="solid",
+        focusthickness=0,
+    )
+    style.map(
+        "Secondary.TButton",
+        background=[("active", PALETTE["hover"]), ("pressed", PALETTE["hover"])],
+        bordercolor=[("active", PALETTE["accent"])],
+    )
 
 
 def _log(line: str) -> None:
@@ -126,106 +205,357 @@ class LauncherApp:
         self.url_vars: list[tuple[BooleanVar, dict]] = []
         self.app_vars: list[tuple[BooleanVar, dict]] = []
 
+        # Counter labels — each card has a "N / M" indicator in its header bar.
+        # We update these reactively via a trace on each BooleanVar.
+        self._sites_count_var: StringVar | None = None
+        self._apps_count_var: StringVar | None = None
+
+        _apply_design(root)
         root.title("Ohaiyo — yesterday's session")
-        root.geometry("960x640")
+        root.geometry("1040x720")
+        root.minsize(820, 560)
 
         self._build_ui()
 
-    # ---------- UI ----------
+    # ---------- UI construction --------------------------------------------
+    #
+    # The layout is a vertical stack:
+    #
+    #   ┌─────────────────────────────────────────────────────────┐
+    #   │ HEADER  ( cat • brand • subtitle      | snapshot meta ) │
+    #   ├─────────────────────────────────────────────────────────┤
+    #   │ STATS   [ apps ]  [ visits ]  [ top site ]              │
+    #   ├─────────────────────────────────────────────────────────┤
+    #   │ COLUMNS ┌── Sites ──────────┐  ┌── Apps ──────────────┐ │
+    #   │         │ ▍ stripe          │  │ ▍ stripe             │ │
+    #   │         │ title    N / M    │  │ title    N / M       │ │
+    #   │         │ ── rows ───────── │  │ ── rows ───────────  │ │
+    #   │         └───────────────────┘  └──────────────────────┘ │
+    #   ├─────────────────────────────────────────────────────────┤
+    #   │ FOOTER  cat-status            [Skip][Select][Launch →]  │
+    #   └─────────────────────────────────────────────────────────┘
+    #
     def _build_ui(self) -> None:
-        outer = ttk.Frame(self.root, padding=12)
-        outer.pack(fill="both", expand=True)
+        outer = tk.Frame(self.root, bg=PALETTE["bg"])
+        outer.pack(fill="both", expand=True, padx=22, pady=20)
 
-        # Brand row: "Oh" + italic "ai" + "yo". We pack three Labels side-by-side
-        # because Tk Labels can't carry inline styling; this is the workaround.
-        brand = ttk.Frame(outer)
-        brand.pack(anchor="w", pady=(0, 2))
-        brand_regular = ("Segoe UI", 22, "bold")
-        brand_italic = ("Segoe UI", 22, "bold italic")
-        ttk.Label(brand, text="Oh", font=brand_regular).pack(side="left")
-        ttk.Label(brand, text="ai", font=brand_italic, foreground="#5b8def").pack(side="left")
-        ttk.Label(brand, text="yo", font=brand_regular).pack(side="left")
+        self._build_header(outer)
+        self._build_stats(outer)
+        self._build_columns(outer)
+        self._build_footer(outer)
+        self._update_counts()  # initial counts (everything ticked)
 
-        header = ttk.Label(
-            outer,
-            text=f"Loaded snapshot: {self.session_path.name}",
-            font=("Segoe UI", 10),
-            foreground="#666",
+    # ---- header -----------------------------------------------------------
+    def _build_header(self, parent: tk.Frame) -> None:
+        header = tk.Frame(parent, bg=PALETTE["bg"])
+        header.pack(fill="x", pady=(0, 16))
+
+        # Left: cat avatar + brand + subtitle stacked.
+        left = tk.Frame(header, bg=PALETTE["bg"])
+        left.pack(side="left", anchor="w")
+
+        tk.Label(
+            left, text="( =^.^= )", font=("Consolas", 14, "bold"),
+            bg=PALETTE["bg"], fg=PALETTE["cat"],
+        ).pack(side="left", padx=(0, 12), pady=(6, 0))
+
+        brand_box = tk.Frame(left, bg=PALETTE["bg"])
+        brand_box.pack(side="left", anchor="w")
+
+        brand = tk.Frame(brand_box, bg=PALETTE["bg"])
+        brand.pack(anchor="w")
+        f_reg = (FONT_BASE, 26, "bold")
+        f_ital = (FONT_BASE, 26, "bold italic")
+        tk.Label(brand, text="Oh", font=f_reg, bg=PALETTE["bg"], fg=PALETTE["text"]).pack(side="left")
+        tk.Label(brand, text="ai", font=f_ital, bg=PALETTE["bg"], fg=PALETTE["accent"]).pack(side="left")
+        tk.Label(brand, text="yo", font=f_reg, bg=PALETTE["bg"], fg=PALETTE["text"]).pack(side="left")
+
+        tk.Label(
+            brand_box, text="Pick up where you left off.",
+            font=(FONT_BASE, 10, "italic"),
+            bg=PALETTE["bg"], fg=PALETTE["muted"],
+        ).pack(anchor="w", pady=(0, 0))
+
+        # Right: snapshot meta — small label + timestamp + filename.
+        right = tk.Frame(header, bg=PALETTE["bg"])
+        right.pack(side="right", anchor="e")
+
+        tk.Label(
+            right, text="SNAPSHOT",
+            font=(FONT_BASE, 8, "bold"),
+            bg=PALETTE["bg"], fg=PALETTE["subtle"],
+        ).pack(anchor="e")
+        tk.Label(
+            right, text=self.session.get("captured_at", "—"),
+            font=(FONT_BASE, 11, "bold"),
+            bg=PALETTE["bg"], fg=PALETTE["text"],
+        ).pack(anchor="e")
+        tk.Label(
+            right, text=self.session_path.name,
+            font=(FONT_BASE, 9),
+            bg=PALETTE["bg"], fg=PALETTE["muted"],
+        ).pack(anchor="e")
+
+    # ---- stats chips ------------------------------------------------------
+    def _build_stats(self, parent: tk.Frame) -> None:
+        """Three chips: APPS count, VISITS count, TOP site domain.
+
+        Chips render the most-loud number on top of a small label, so a glance
+        at the row tells you what kind of day yesterday was.
+        """
+        bar = tk.Frame(parent, bg=PALETTE["bg"])
+        bar.pack(fill="x", pady=(0, 14))
+
+        visits = self.session.get("visits", [])
+        apps = self.session.get("apps", [])
+        domains = Counter(_domain(v.get("url", "")) for v in visits if v.get("url"))
+        top_domain = domains.most_common(1)[0][0] if domains else "—"
+
+        def chip(label: str, value: str, accent: str) -> None:
+            shell = tk.Frame(
+                bar, bg=PALETTE["surface"],
+                highlightthickness=1, highlightbackground=PALETTE["border"],
+            )
+            shell.pack(side="left", padx=(0, 10))
+
+            # Tiny accent bar on the left side gives each chip a categorical hue.
+            stripe = tk.Frame(shell, bg=accent, width=4)
+            stripe.pack(side="left", fill="y")
+
+            inner = tk.Frame(shell, bg=PALETTE["surface"], padx=14, pady=10)
+            inner.pack(side="left")
+
+            tk.Label(
+                inner, text=label,
+                font=(FONT_BASE, 8, "bold"),
+                bg=PALETTE["surface"], fg=PALETTE["subtle"],
+            ).pack(anchor="w")
+            tk.Label(
+                inner, text=value,
+                font=(FONT_BASE, 15, "bold"),
+                bg=PALETTE["surface"], fg=PALETTE["text"],
+            ).pack(anchor="w")
+
+        chip("APPS",   str(len(apps)),   PALETTE["apps"])
+        chip("VISITS", str(len(visits)), PALETTE["sites"])
+        chip("TOP",    top_domain,       PALETTE["accent"])
+
+    # ---- columns ----------------------------------------------------------
+    def _build_columns(self, parent: tk.Frame) -> None:
+        body = tk.Frame(parent, bg=PALETTE["bg"])
+        body.pack(fill="both", expand=True)
+
+        sites_card, sites_content, self._sites_count_var = self._make_card(
+            body, "SITES TO REOPEN", PALETTE["sites"]
         )
-        header.pack(anchor="w", pady=(0, 6))
+        sites_card.pack(side="left", fill="both", expand=True, padx=(0, 8))
+        self._fill_urls(sites_content)
 
-        sm = scrolledtext.ScrolledText(outer, height=8, wrap="word")
-        sm.insert("1.0", summary.build(self.session))
-        sm.configure(state="disabled")
-        sm.pack(fill="x", pady=(0, 10))
-
-        cols = ttk.Frame(outer)
-        cols.pack(fill="both", expand=True)
-
-        # Left — URLs
-        left = ttk.LabelFrame(cols, text="Sites to reopen", padding=8)
-        left.pack(side="left", fill="both", expand=True, padx=(0, 6))
-        self._fill_urls(left)
-
-        # Right — Apps
-        right = ttk.LabelFrame(cols, text="Apps to reopen", padding=8)
-        right.pack(side="left", fill="both", expand=True, padx=(6, 0))
-        self._fill_apps(right)
-
-        # Footer
-        footer = ttk.Frame(outer)
-        footer.pack(fill="x", pady=(10, 0))
-        self.status = StringVar(
-            value=f"{_LAUNCH_CAT_IDLE}  tick what you want, untick what was noise."
+        apps_card, apps_content, self._apps_count_var = self._make_card(
+            body, "APPS TO REOPEN", PALETTE["apps"]
         )
-        ttk.Label(footer, textvariable=self.status).pack(side="left")
-        ttk.Button(footer, text="Skip all", command=self._uncheck_all).pack(side="right", padx=4)
-        ttk.Button(footer, text="Select all", command=self._check_all).pack(side="right", padx=4)
-        ttk.Button(footer, text="Launch selected", command=self._launch).pack(side="right", padx=4)
+        apps_card.pack(side="left", fill="both", expand=True, padx=(8, 0))
+        self._fill_apps(apps_content)
 
-    def _scrollable(self, parent: ttk.Frame) -> ttk.Frame:
-        canvas = ttk.Frame(parent)
-        canvas.pack(fill="both", expand=True)
-        from tkinter import Canvas, Scrollbar
-        cv = Canvas(canvas, highlightthickness=0)
-        sb = Scrollbar(canvas, orient="vertical", command=cv.yview)
-        inner = ttk.Frame(cv)
-        inner.bind("<Configure>", lambda e: cv.configure(scrollregion=cv.bbox("all")))
-        cv.create_window((0, 0), window=inner, anchor="nw")
+    def _make_card(
+        self, parent: tk.Frame, title: str, accent: str,
+    ) -> tuple[tk.Frame, tk.Frame, StringVar]:
+        """Build a card with a colored top stripe, title bar, and content area.
+
+        Returns ``(card_frame, content_frame, counter_var)``. Counter_var feeds
+        the "N / M" indicator in the header — update it via _update_counts.
+        """
+        wrapper = tk.Frame(
+            parent, bg=PALETTE["surface"],
+            highlightthickness=1, highlightbackground=PALETTE["border"],
+        )
+
+        # Top accent stripe — 3 px of brand color across the full width.
+        tk.Frame(wrapper, bg=accent, height=3).pack(fill="x")
+
+        # Header row: title on left, counter on right.
+        head = tk.Frame(wrapper, bg=PALETTE["surface"])
+        head.pack(fill="x", padx=14, pady=(10, 6))
+
+        tk.Label(
+            head, text=title,
+            font=(FONT_BASE, 9, "bold"),
+            bg=PALETTE["surface"], fg=accent,
+        ).pack(side="left")
+
+        counter = StringVar(value="0 / 0")
+        tk.Label(
+            head, textvariable=counter,
+            font=(FONT_BASE, 9),
+            bg=PALETTE["surface"], fg=PALETTE["muted"],
+        ).pack(side="right")
+
+        # Subtle divider under the header.
+        tk.Frame(wrapper, bg=PALETTE["border"], height=1).pack(fill="x", padx=14)
+
+        # Content area is itself scrollable.
+        content = self._scrollable_surface(wrapper)
+
+        return wrapper, content, counter
+
+    def _scrollable_surface(self, parent: tk.Frame) -> tk.Frame:
+        """Scrollable region whose background matches a card surface."""
+        host = tk.Frame(parent, bg=PALETTE["surface"])
+        host.pack(fill="both", expand=True, padx=2, pady=(4, 4))
+
+        cv = tk.Canvas(host, bg=PALETTE["surface"], highlightthickness=0)
+        sb = tk.Scrollbar(host, orient="vertical", command=cv.yview)
+        inner = tk.Frame(cv, bg=PALETTE["surface"])
+
+        inner.bind("<Configure>", lambda _e: cv.configure(scrollregion=cv.bbox("all")))
+        cv.create_window((0, 0), window=inner, anchor="nw",
+                         width=0)  # will resize via bind below
         cv.configure(yscrollcommand=sb.set)
         cv.pack(side="left", fill="both", expand=True)
         sb.pack(side="right", fill="y")
 
-        # Mouse-wheel scroll inside this canvas only.
+        # Make inner frame match canvas width so row labels stretch correctly.
+        def _on_canvas_resize(e):
+            cv.itemconfigure(cv.find_all()[0], width=e.width)
+        cv.bind("<Configure>", _on_canvas_resize)
+
+        # Mouse-wheel scroll, but only when the cursor is over this card.
         def _on_wheel(e):
             cv.yview_scroll(int(-1 * (e.delta / 120)), "units")
-        inner.bind("<Enter>", lambda _: cv.bind_all("<MouseWheel>", _on_wheel))
-        inner.bind("<Leave>", lambda _: cv.unbind_all("<MouseWheel>"))
+        inner.bind("<Enter>", lambda _e: cv.bind_all("<MouseWheel>", _on_wheel))
+        inner.bind("<Leave>", lambda _e: cv.unbind_all("<MouseWheel>"))
         return inner
 
-    def _fill_urls(self, parent: ttk.Frame) -> None:
+    def _item_row(
+        self, parent: tk.Frame, primary: str, secondary: str, var: BooleanVar,
+    ) -> None:
+        """One clickable row with primary text, muted subtitle, and hover."""
+        row = tk.Frame(parent, bg=PALETTE["surface"], padx=12, pady=6)
+        row.pack(fill="x")
+
+        def set_bg(color: str) -> None:
+            row.configure(bg=color)
+            for child in row.winfo_children():
+                try:
+                    child.configure(bg=color)
+                except tk.TclError:
+                    pass
+                # text labels inside the right column also need recoloring
+                for grand in child.winfo_children():
+                    try:
+                        grand.configure(bg=color)
+                    except tk.TclError:
+                        pass
+
+        cb = tk.Checkbutton(
+            row, variable=var,
+            bg=PALETTE["surface"], activebackground=PALETTE["hover"],
+            highlightthickness=0, bd=0, takefocus=0,
+        )
+        cb.pack(side="left", padx=(0, 8))
+
+        text = tk.Frame(row, bg=PALETTE["surface"])
+        text.pack(side="left", fill="x", expand=True)
+        tk.Label(
+            text, text=primary, anchor="w",
+            font=(FONT_BASE, 10, "bold"),
+            bg=PALETTE["surface"], fg=PALETTE["text"],
+        ).pack(fill="x")
+        if secondary:
+            tk.Label(
+                text, text=secondary, anchor="w",
+                font=(FONT_BASE, 9),
+                bg=PALETTE["surface"], fg=PALETTE["muted"],
+            ).pack(fill="x")
+
+        # Click anywhere on the row toggles the checkbox.
+        def toggle(_e=None):
+            var.set(not var.get())
+
+        for w in (row, text, *text.winfo_children()):
+            w.bind("<Button-1>", toggle)
+            w.bind("<Enter>", lambda _e: set_bg(PALETTE["hover"]))
+            w.bind("<Leave>", lambda _e: set_bg(PALETTE["surface"]))
+
+    def _fill_urls(self, parent: tk.Frame) -> None:
         urls = _pick_top_urls(self.session.get("visits", []), MAX_URLS_SHOWN)
         if not urls:
-            ttk.Label(parent, text="(no history found)").pack()
+            tk.Label(
+                parent, text="(no history found)",
+                font=(FONT_BASE, 10, "italic"),
+                bg=PALETTE["surface"], fg=PALETTE["muted"],
+            ).pack(pady=20)
             return
-        body = self._scrollable(parent)
         for v in urls:
             var = BooleanVar(value=True)
-            label = f"{_domain(v['url'])} — {v.get('title') or v['url'][:80]}"
-            ttk.Checkbutton(body, text=label, variable=var).pack(anchor="w", pady=1)
+            # Reactive: counter refreshes whenever any var changes.
+            var.trace_add("write", lambda *_a: self._update_counts())
+            primary = _domain(v["url"]) or v["url"][:40]
+            secondary = (v.get("title") or v["url"])[:90]
+            self._item_row(parent, primary, secondary, var)
             self.url_vars.append((var, v))
 
-    def _fill_apps(self, parent: ttk.Frame) -> None:
+    def _fill_apps(self, parent: tk.Frame) -> None:
         apps = self.session.get("apps", [])
         if not apps:
-            ttk.Label(parent, text="(no apps captured)").pack()
+            tk.Label(
+                parent, text="(no apps captured)",
+                font=(FONT_BASE, 10, "italic"),
+                bg=PALETTE["surface"], fg=PALETTE["muted"],
+            ).pack(pady=20)
             return
-        body = self._scrollable(parent)
         for a in apps:
             var = BooleanVar(value=True)
-            title_hint = f" — {a['window_titles'][0]}" if a.get("window_titles") else ""
-            ttk.Checkbutton(body, text=f"{a['name']}{title_hint}", variable=var).pack(anchor="w", pady=1)
+            var.trace_add("write", lambda *_a: self._update_counts())
+            primary = a["name"]
+            secondary = a["window_titles"][0] if a.get("window_titles") else ""
+            self._item_row(parent, primary, secondary, var)
             self.app_vars.append((var, a))
+
+    # ---- footer -----------------------------------------------------------
+    def _build_footer(self, parent: tk.Frame) -> None:
+        footer = tk.Frame(parent, bg=PALETTE["bg"])
+        footer.pack(fill="x", pady=(16, 0))
+
+        # Subtle divider above the footer.
+        tk.Frame(parent, bg=PALETTE["border"], height=1).pack(
+            fill="x", before=footer, pady=(0, 12)
+        )
+
+        self.status = StringVar(
+            value=f"{_LAUNCH_CAT_IDLE}  tick what you want, untick what was noise."
+        )
+        tk.Label(
+            footer, textvariable=self.status,
+            font=(FONT_BASE, 11),
+            bg=PALETTE["bg"], fg=PALETTE["muted"], anchor="w",
+        ).pack(side="left")
+
+        btns = tk.Frame(footer, bg=PALETTE["bg"])
+        btns.pack(side="right")
+
+        ttk.Button(
+            btns, text="Skip all", style="Secondary.TButton",
+            command=self._uncheck_all,
+        ).pack(side="left", padx=(0, 6))
+        ttk.Button(
+            btns, text="Select all", style="Secondary.TButton",
+            command=self._check_all,
+        ).pack(side="left", padx=(0, 12))
+        ttk.Button(
+            btns, text="✦  Launch selected", style="Primary.TButton",
+            command=self._launch,
+        ).pack(side="left")
+
+    # ---- counters ---------------------------------------------------------
+    def _update_counts(self) -> None:
+        """Refresh the "N / M" indicators in each card header."""
+        if self._sites_count_var is not None:
+            sel = sum(1 for v, _ in self.url_vars if v.get())
+            self._sites_count_var.set(f"{sel} / {len(self.url_vars)}")
+        if self._apps_count_var is not None:
+            sel = sum(1 for v, _ in self.app_vars if v.get())
+            self._apps_count_var.set(f"{sel} / {len(self.app_vars)}")
 
     # ---------- actions ----------
     def _check_all(self) -> None:
